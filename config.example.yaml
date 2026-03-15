@@ -1,0 +1,43 @@
+# Example configuration for local runs and container mounts.
+# Copy to config.yaml and replace placeholder values with real secrets.
+telegram:
+  token: "0000000000:replace-with-your-telegram-bot-token"
+  password: "replace-with-bot-password"
+  language: "ru" # Optional. Supported values: ru, en. Remove to auto-detect from Telegram.
+
+radarr:
+  server:
+    addr: radarr
+    port: 7878
+    path: /
+    ssl: false
+  auth:
+    apikey: "replace-with-radarr-api-key"
+
+sonarr:
+  server:
+    addr: sonarr
+    port: 8989
+    path: /
+    ssl: false
+  auth:
+    apikey: "replace-with-sonarr-api-key"
+
+qbittorrent:
+  enabled: true
+  verify_tls: true
+  server:
+    addr: qbittorrent
+    port: 6004
+    path: /
+    ssl: false
+  auth:
+    username: "replace-with-qbittorrent-username"
+    password: "replace-with-qbittorrent-password"
+  options:
+    category: "tg"
+    tags: []
+    savepath: ""
+    paused: false
+    skip_checking: false
+    auto_torrent_management: false
