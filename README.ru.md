@@ -47,6 +47,7 @@ cp config.example.yaml containers/tg-bot/config.yaml
 
 - `telegram.token` - токен бота от BotFather
 - `telegram.password` - пароль, который будут вводить пользователи при первом входе
+- `telegram.proxy.*` - опциональный прокси только для Telegram Bot API, если прямой доступ к Telegram недоступен
 - `radarr.server.addr` и `sonarr.server.addr` - имена сервисов в Docker Compose (`radarr`, `sonarr`), если бот находится в той же сети
 - `radarr.auth.apikey` и `sonarr.auth.apikey` - API-ключи из настроек Radarr/Sonarr
 - `qbittorrent.*` - параметры qBittorrent, если хотите отправлять magnet-ссылки из Telegram
@@ -105,6 +106,13 @@ telegram:
   token: "0000000000:replace-with-your-telegram-bot-token"
   password: "replace-with-bot-password"
   language: "ru"
+  proxy:
+    enabled: false
+    type: "http"
+    host: "127.0.0.1"
+    port: 8080
+    username: ""
+    password: ""
 
 radarr:
   server:
@@ -156,6 +164,15 @@ qbittorrent:
 - `sonarr.server.port`
 - `sonarr.auth.apikey`
 
+Опциональный раздел Telegram-прокси:
+
+- `telegram.proxy.enabled`
+- `telegram.proxy.type` (`http`, `socks4`, `socks5`)
+- `telegram.proxy.host`
+- `telegram.proxy.port`
+- `telegram.proxy.username`
+- `telegram.proxy.password`
+
 Опциональный раздел qBittorrent:
 
 - `qbittorrent.enabled`
@@ -172,6 +189,12 @@ qbittorrent:
 - `qbittorrent.options.paused`
 - `qbittorrent.options.skip_checking`
 - `qbittorrent.options.auto_torrent_management`
+
+Примечания по Telegram-прокси:
+
+- Блок `telegram.proxy` влияет только на соединение с Telegram Bot API. Подключения к Radarr, Sonarr и qBittorrent продолжают использовать прямые адреса из своих разделов конфига.
+- В текущем стеке поддерживаются типы `http`, `socks4` и `socks5`.
+- MTProto-прокси в этом проекте не поддерживаются, потому что бот использует `aiogram` и Telegram Bot API по HTTPS, а не MTProto-клиент вроде Telethon или Pyrogram.
 
 Пути окружения во время выполнения:
 

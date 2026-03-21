@@ -9,6 +9,7 @@ from pathlib import Path
 
 import requests
 from aiogram import Bot, Dispatcher, F
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
@@ -58,6 +59,16 @@ class SeriesSearchSession:
 MOVIE_SEARCH_PAGE_SIZE = 5
 SERIES_SEARCH_PAGE_SIZE = 5
 MAGNET_LINK_RE = re.compile(r"magnet:\?[^\s]+", re.IGNORECASE)
+
+
+def _build_bot(config: AppConfig) -> Bot:
+    if config.telegram.proxy is None:
+        return Bot(token=config.telegram.token)
+
+    return Bot(
+        token=config.telegram.token,
+        session=AiohttpSession(proxy=config.telegram.proxy.url),
+    )
 
 TRANSLATIONS = {
     "ru": {
@@ -850,7 +861,7 @@ async def run_bot() -> None:
         series_search_state={},
     )
 
-    bot = Bot(token=config.telegram.token)
+    bot = _build_bot(config)
     dp = _build_dispatcher(context)
 
     try:

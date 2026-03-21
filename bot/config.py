@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import yaml
 
@@ -39,6 +40,27 @@ class TelegramConfig:
     token: str
     password: str
     language: str | None
+    proxy: "TelegramProxyConfig | None"
+
+
+@dataclass(frozen=True)
+class TelegramProxyConfig:
+    enabled: bool
+    type: str
+    host: str
+    port: int
+    username: str | None
+    password: str | None
+
+    @property
+    def url(self) -> str:
+        credentials = ""
+        if self.username:
+            credentials = quote(self.username, safe="")
+            if self.password:
+                credentials = f"{credentials}:{quote(self.password, safe='')}"
+            credentials = f"{credentials}@"
+        return f"{self.type}://{credentials}{self.host}:{self.port}"
 
 
 @dataclass(frozen=True)
@@ -120,6 +142,41 @@ def _parse_language(raw: Any) -> str | None:
     return language
 
 
+def _parse_telegram_proxy(raw: dict[str, Any]) -> TelegramProxyConfig | None:
+    if not raw:
+        return None
+
+    enabled = bool(raw.get("enabled", False))
+    proxy_type = str(raw.get("type", "")).strip().lower()
+    host = str(raw.get("host", "")).strip()
+    port = int(raw.get("port", 0))
+    username = str(raw.get("username", "")).strip() or None
+    password = str(raw.get("password", "")).strip() or None
+
+    if not enabled:
+        return None
+
+    supported_types = {"http", "socks4", "socks5"}
+    if proxy_type not in supported_types:
+        supported = ", ".join(sorted(supported_types))
+        raise ValueError(f"Unsupported telegram.proxy.type. Expected one of: {supported}")
+    if not host:
+        raise ValueError("Missing telegram.proxy.host")
+    if port <= 0:
+        raise ValueError("Missing telegram.proxy.port")
+    if password and not username:
+        raise ValueError("telegram.proxy.username is required when password is set")
+
+    return TelegramProxyConfig(
+        enabled=True,
+        type=proxy_type,
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+    )
+
+
 def _parse_qbittorrent(raw: dict[str, Any]) -> QBittorrentConfig | None:
     if not raw:
         return None
@@ -181,9 +238,10 @@ def load_config(path: str | Path) -> AppConfig:
     if not password:
         raise ValueError("Missing telegram.password")
     language = _parse_language(telegram_raw.get("language"))
+    proxy = _parse_telegram_proxy(telegram_raw.get("proxy", {}))
 
     return AppConfig(
-        telegram=TelegramConfig(token=token, password=password, language=language),
+        telegram=TelegramConfig(token=token, password=password, language=language, proxy=proxy),
         radarr=_parse_service(raw.get("radarr", {}), "radarr"),
         sonarr=_parse_service(raw.get("sonarr", {}), "sonarr"),
         qbittorrent=_parse_qbittorrent(raw.get("qbittorrent", {})),

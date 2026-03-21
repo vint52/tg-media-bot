@@ -4,6 +4,13 @@ telegram:
   token: "0000000000:replace-with-your-telegram-bot-token"
   password: "replace-with-bot-password"
   language: "ru" # Optional. Supported values: ru, en. Remove to auto-detect from Telegram.
+  proxy:
+    enabled: false
+    type: "http" # Supported values: http, socks4, socks5.
+    host: "127.0.0.1"
+    port: 8080
+    username: ""
+    password: ""
 
 radarr:
   server:
