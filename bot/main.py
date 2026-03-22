@@ -255,7 +255,6 @@ def _main_menu_keyboard(language: str) -> ReplyKeyboardMarkup:
                 KeyboardButton(text=_translate(language, "button_add_series")),
                 KeyboardButton(text=_translate(language, "button_add_movie")),
             ],
-            [KeyboardButton(text=_translate(language, "button_add_magnet"))],
         ],
         resize_keyboard=True,
     )
@@ -930,18 +929,6 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
         _reset_pending_inputs(chat_id)
         context.awaiting_series_query.add(chat_id)
         await message.answer(_t(language, "enter_series_title"))
-
-    @dp.message(F.text.in_({TRANSLATIONS["ru"]["button_add_magnet"], TRANSLATIONS["en"]["button_add_magnet"]}))
-    async def add_magnet_prompt_handler(message: Message) -> None:
-        chat_id = message.chat.id
-        language = _language_for_message(message)
-        if not context.storage.is_authorized(chat_id):
-            await message.answer(_t(language, "access_denied"))
-            return
-
-        _reset_pending_inputs(chat_id)
-        context.awaiting_magnet_link.add(chat_id)
-        await message.answer(_t(language, "send_magnet_link"))
 
     @dp.callback_query(F.data == "movie_more")
     async def movie_more_handler(callback: CallbackQuery) -> None:
