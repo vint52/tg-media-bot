@@ -113,6 +113,38 @@ class RadarrClient:
 
         return sorted(downloaded, key=lambda item: str(item.get("title", "")).lower())
 
+    def movie_exists(self, movie_id: int) -> bool:
+        if movie_id <= 0:
+            raise ValueError("Нельзя проверить фильм без id.")
+
+        response = requests.get(
+            f"{self.base_url}/api/v3/movie/{movie_id}",
+            headers=self._headers(),
+            timeout=10,
+        )
+        if response.status_code == 404:
+            return False
+
+        response.raise_for_status()
+        return True
+
+    def find_movie_by_tmdb(self, tmdb_id: int) -> dict | None:
+        if tmdb_id <= 0:
+            raise ValueError("Нельзя проверить фильм без tmdbId.")
+
+        response = requests.get(
+            f"{self.base_url}/api/v3/movie",
+            headers=self._headers(),
+            timeout=10,
+        )
+        response.raise_for_status()
+        movies = response.json()
+        if not isinstance(movies, list):
+            movies = []
+
+        found_movie = next((movie for movie in movies if int(movie.get("tmdbId", 0) or 0) == tmdb_id), None)
+        return found_movie if isinstance(found_movie, dict) else None
+
     def delete_movie(self, movie_id: int, *, delete_files: bool) -> None:
         if movie_id <= 0:
             raise ValueError("Нельзя удалить фильм без id.")

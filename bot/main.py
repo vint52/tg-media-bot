@@ -10,6 +10,7 @@ from pathlib import Path
 import requests
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
@@ -85,7 +86,6 @@ TRANSLATIONS = {
         "button_all_movies": "Все фильмы",
         "button_add_series": "Добавить сериал",
         "button_add_movie": "Добавить фильм",
-        "button_add_magnet": "Добавить magnet",
         "button_download": "Скачать",
         "button_details": "Подробнее",
         "button_delete": "Удалить",
@@ -120,7 +120,6 @@ TRANSLATIONS = {
         "downloaded_movies": "Скачанные фильмы:",
         "enter_movie_title": "Введите название фильма для поиска.",
         "enter_series_title": "Введите название сериала для поиска.",
-        "send_magnet_link": "Отправьте magnet-ссылку для добавления в qBittorrent.",
         "active_search_not_found": "Активный поиск не найден.",
         "no_more_options": "Больше вариантов нет.",
         "no_access_short": "Нет доступа.",
@@ -148,8 +147,6 @@ TRANSLATIONS = {
         "movie_deleted": "Фильм «{title}» удален.",
         "series_deleted": "Сериал «{title}» удален.",
         "delete_cancelled": "Удаление отменено.",
-        "confirm_delete_movie": "Удалить фильм «{title}»?",
-        "confirm_delete_series": "Удалить сериал «{title}»?",
         "unknown_command": "Команда не распознана. Используйте /help.",
     },
     "en": {
@@ -157,7 +154,6 @@ TRANSLATIONS = {
         "button_all_movies": "All movies",
         "button_add_series": "Add series",
         "button_add_movie": "Add movie",
-        "button_add_magnet": "Add magnet",
         "button_download": "Download",
         "button_details": "Details",
         "button_delete": "Delete",
@@ -192,7 +188,6 @@ TRANSLATIONS = {
         "downloaded_movies": "Downloaded movies:",
         "enter_movie_title": "Enter a movie title to search for.",
         "enter_series_title": "Enter a series title to search for.",
-        "send_magnet_link": "Send a magnet link to add it to qBittorrent.",
         "active_search_not_found": "No active search found.",
         "no_more_options": "There are no more results.",
         "no_access_short": "Access denied.",
@@ -220,8 +215,6 @@ TRANSLATIONS = {
         "movie_deleted": "Movie \"{title}\" has been deleted.",
         "series_deleted": "Series \"{title}\" has been deleted.",
         "delete_cancelled": "Deletion cancelled.",
-        "confirm_delete_movie": "Delete movie \"{title}\"?",
-        "confirm_delete_series": "Delete series \"{title}\"?",
         "unknown_command": "Command not recognized. Use /help.",
     },
 }
@@ -473,6 +466,12 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
         if len(text) <= limit:
             return text
         return text[: limit - 3].rstrip() + "..."
+
+    async def _delete_message_or_clear_markup(message: Message) -> None:
+        try:
+            await message.delete()
+        except TelegramAPIError:
+            await message.edit_reply_markup(reply_markup=None)
 
     def _series_season_count(series: dict) -> str:
         seasons = series.get("seasons")
@@ -1145,13 +1144,25 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
         title = _movie_title(movie, language)
         try:
             context.radarr_client.delete_movie(movie_id, delete_files=True)
+        except requests.ReadTimeout as exc:
+            try:
+                movie_still_exists = context.radarr_client.movie_exists(movie_id)
+            except requests.RequestException:
+                await callback.answer()
+                await message.answer(_t(language, "movie_delete_failed"))
+                return
+
+            if movie_still_exists:
+                await callback.answer()
+                await message.answer(_t(language, "movie_delete_failed"))
+                return
         except requests.RequestException:
             await callback.answer()
             await message.answer(_t(language, "movie_delete_failed"))
             return
 
         _remove_library_movie(chat_id, movie_id)
-        await message.edit_reply_markup(reply_markup=None)
+        await _delete_message_or_clear_markup(message)
         await message.answer(_t(language, "movie_deleted", title=title))
         await callback.answer(_t(language, "deleted_short"))
 
@@ -1182,13 +1193,25 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
         title = _series_title(series, language)
         try:
             context.sonarr_client.delete_series(series_id, delete_files=True)
+        except requests.ReadTimeout as exc:
+            try:
+                series_still_exists = context.sonarr_client.series_exists(series_id)
+            except requests.RequestException:
+                await callback.answer()
+                await message.answer(_t(language, "series_delete_failed"))
+                return
+
+            if series_still_exists:
+                await callback.answer()
+                await message.answer(_t(language, "series_delete_failed"))
+                return
         except requests.RequestException:
             await callback.answer()
             await message.answer(_t(language, "series_delete_failed"))
             return
 
         _remove_library_series(chat_id, series_id)
-        await message.edit_reply_markup(reply_markup=None)
+        await _delete_message_or_clear_markup(message)
         await message.answer(_t(language, "series_deleted", title=title))
         await callback.answer(_t(language, "deleted_short"))
 
@@ -1260,12 +1283,26 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             await callback.answer(_t(language, "selected_option_not_found"), show_alert=True)
             return
 
+        created: dict
         try:
             created = context.radarr_client.add_movie(movie)
         except ValueError as exc:
             await message.answer(str(exc))
             await callback.answer()
             return
+        except requests.ReadTimeout as exc:
+            try:
+                verified_movie = context.radarr_client.find_movie_by_tmdb(tmdb_id)
+            except requests.RequestException:
+                await message.answer(_t(language, "movie_add_failed"))
+                await callback.answer()
+                return
+
+            if verified_movie is None:
+                await message.answer(_t(language, "movie_add_failed"))
+                await callback.answer()
+                return
+            created = verified_movie
         except requests.RequestException:
             await message.answer(_t(language, "movie_add_failed"))
             await callback.answer()
@@ -1300,12 +1337,26 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             await callback.answer(_t(language, "selected_option_not_found"), show_alert=True)
             return
 
+        created: dict
         try:
             created = context.sonarr_client.add_series(series)
         except ValueError as exc:
             await message.answer(str(exc))
             await callback.answer()
             return
+        except requests.ReadTimeout as exc:
+            try:
+                verified_series = context.sonarr_client.find_series_by_tvdb(tvdb_id)
+            except requests.RequestException:
+                await message.answer(_t(language, "series_add_failed"))
+                await callback.answer()
+                return
+
+            if verified_series is None:
+                await message.answer(_t(language, "series_add_failed"))
+                await callback.answer()
+                return
+            created = verified_series
         except requests.RequestException:
             await message.answer(_t(language, "series_add_failed"))
             await callback.answer()
