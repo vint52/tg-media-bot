@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,6 +71,28 @@ SERIES_SEARCH_PAGE_SIZE = 5
 LIBRARY_PAGE_SIZE = 10
 MAGNET_LINK_RE = re.compile(r"magnet:\?[^\s]+", re.IGNORECASE)
 
+# region agent log
+DEBUG_SESSION_ID = "92b1ae"
+
+
+def _debug_log(location: str, message: str, *, data: dict, hypothesis_id: str, run_id: str = "initial") -> None:
+    try:
+        payload = {
+            "sessionId": DEBUG_SESSION_ID,
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        print(json.dumps(payload, ensure_ascii=False), flush=True)
+    except Exception:
+        pass
+
+
+# endregion
+
 
 def _build_bot(config: AppConfig) -> Bot:
     if config.telegram.proxy is None:
@@ -85,7 +109,6 @@ TRANSLATIONS = {
         "button_all_movies": "Все фильмы",
         "button_add_series": "Добавить сериал",
         "button_add_movie": "Добавить фильм",
-        "button_add_magnet": "Добавить magnet",
         "button_download": "Скачать",
         "button_details": "Подробнее",
         "button_delete": "Удалить",
@@ -120,7 +143,6 @@ TRANSLATIONS = {
         "downloaded_movies": "Скачанные фильмы:",
         "enter_movie_title": "Введите название фильма для поиска.",
         "enter_series_title": "Введите название сериала для поиска.",
-        "send_magnet_link": "Отправьте magnet-ссылку для добавления в qBittorrent.",
         "active_search_not_found": "Активный поиск не найден.",
         "no_more_options": "Больше вариантов нет.",
         "no_access_short": "Нет доступа.",
@@ -148,8 +170,6 @@ TRANSLATIONS = {
         "movie_deleted": "Фильм «{title}» удален.",
         "series_deleted": "Сериал «{title}» удален.",
         "delete_cancelled": "Удаление отменено.",
-        "confirm_delete_movie": "Удалить фильм «{title}»?",
-        "confirm_delete_series": "Удалить сериал «{title}»?",
         "unknown_command": "Команда не распознана. Используйте /help.",
     },
     "en": {
@@ -157,7 +177,6 @@ TRANSLATIONS = {
         "button_all_movies": "All movies",
         "button_add_series": "Add series",
         "button_add_movie": "Add movie",
-        "button_add_magnet": "Add magnet",
         "button_download": "Download",
         "button_details": "Details",
         "button_delete": "Delete",
@@ -192,7 +211,6 @@ TRANSLATIONS = {
         "downloaded_movies": "Downloaded movies:",
         "enter_movie_title": "Enter a movie title to search for.",
         "enter_series_title": "Enter a series title to search for.",
-        "send_magnet_link": "Send a magnet link to add it to qBittorrent.",
         "active_search_not_found": "No active search found.",
         "no_more_options": "There are no more results.",
         "no_access_short": "Access denied.",
@@ -220,8 +238,6 @@ TRANSLATIONS = {
         "movie_deleted": "Movie \"{title}\" has been deleted.",
         "series_deleted": "Series \"{title}\" has been deleted.",
         "delete_cancelled": "Deletion cancelled.",
-        "confirm_delete_movie": "Delete movie \"{title}\"?",
-        "confirm_delete_series": "Delete series \"{title}\"?",
         "unknown_command": "Command not recognized. Use /help.",
     },
 }
@@ -1143,14 +1159,49 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             return
 
         title = _movie_title(movie, language)
+        # region agent log
+        _debug_log(
+            "bot/main.py:1137",
+            "movie delete handler entered",
+            data={
+                "movieId": movie_id,
+                "callbackData": str(callback.data),
+                "title": title,
+            },
+            hypothesis_id="H5",
+        )
+        # endregion
         try:
             context.radarr_client.delete_movie(movie_id, delete_files=True)
-        except requests.RequestException:
+        except requests.RequestException as exc:
+            # region agent log
+            _debug_log(
+                "bot/main.py:1140",
+                "movie delete handler caught request exception",
+                data={
+                    "movieId": movie_id,
+                    "exceptionType": type(exc).__name__,
+                    "exceptionText": str(exc)[:300],
+                },
+                hypothesis_id="H1",
+            )
+            # endregion
             await callback.answer()
             await message.answer(_t(language, "movie_delete_failed"))
             return
 
         _remove_library_movie(chat_id, movie_id)
+        # region agent log
+        _debug_log(
+            "bot/main.py:1153",
+            "movie delete handler completed successfully",
+            data={
+                "movieId": movie_id,
+                "title": title,
+            },
+            hypothesis_id="H3",
+        )
+        # endregion
         await message.edit_reply_markup(reply_markup=None)
         await message.answer(_t(language, "movie_deleted", title=title))
         await callback.answer(_t(language, "deleted_short"))
@@ -1180,14 +1231,49 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             return
 
         title = _series_title(series, language)
+        # region agent log
+        _debug_log(
+            "bot/main.py:1182",
+            "series delete handler entered",
+            data={
+                "seriesId": series_id,
+                "callbackData": str(callback.data),
+                "title": title,
+            },
+            hypothesis_id="H3",
+        )
+        # endregion
         try:
             context.sonarr_client.delete_series(series_id, delete_files=True)
-        except requests.RequestException:
+        except requests.RequestException as exc:
+            # region agent log
+            _debug_log(
+                "bot/main.py:1185",
+                "series delete handler caught request exception",
+                data={
+                    "seriesId": series_id,
+                    "exceptionType": type(exc).__name__,
+                    "exceptionText": str(exc)[:300],
+                },
+                hypothesis_id="H3",
+            )
+            # endregion
             await callback.answer()
             await message.answer(_t(language, "series_delete_failed"))
             return
 
         _remove_library_series(chat_id, series_id)
+        # region agent log
+        _debug_log(
+            "bot/main.py:1198",
+            "series delete handler completed successfully",
+            data={
+                "seriesId": series_id,
+                "title": title,
+            },
+            hypothesis_id="H3",
+        )
+        # endregion
         await message.edit_reply_markup(reply_markup=None)
         await message.answer(_t(language, "series_deleted", title=title))
         await callback.answer(_t(language, "deleted_short"))

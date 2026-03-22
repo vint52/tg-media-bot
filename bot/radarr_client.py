@@ -1,8 +1,34 @@
 from __future__ import annotations
 
+import json
+import time
+
 import requests
 
 from bot.config import MediaServiceConfig
+
+
+# region agent log
+DEBUG_SESSION_ID = "92b1ae"
+
+
+def _debug_log(location: str, message: str, *, data: dict, hypothesis_id: str, run_id: str = "initial") -> None:
+    try:
+        payload = {
+            "sessionId": DEBUG_SESSION_ID,
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        print(json.dumps(payload, ensure_ascii=False), flush=True)
+    except Exception:
+        pass
+
+
+# endregion
 
 
 class RadarrClient:
@@ -126,4 +152,18 @@ class RadarrClient:
             },
             timeout=10,
         )
+        # region agent log
+        _debug_log(
+            "bot/radarr_client.py:144",
+            "radarr delete response received",
+            data={
+                "movieId": movie_id,
+                "deleteFiles": delete_files,
+                "statusCode": response.status_code,
+                "reason": response.reason,
+                "bodyPreview": response.text[:400],
+            },
+            hypothesis_id="H1",
+        )
+        # endregion
         response.raise_for_status()
