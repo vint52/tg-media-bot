@@ -1,34 +1,8 @@
 from __future__ import annotations
 
-import json
-import time
-
 import requests
 
 from bot.config import MediaServiceConfig
-
-
-# region agent log
-DEBUG_SESSION_ID = "92b1ae"
-
-
-def _debug_log(location: str, message: str, *, data: dict, hypothesis_id: str, run_id: str = "initial") -> None:
-    try:
-        payload = {
-            "sessionId": DEBUG_SESSION_ID,
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-        }
-        print(json.dumps(payload, ensure_ascii=False), flush=True)
-    except Exception:
-        pass
-
-
-# endregion
 
 
 class SonarrClient:
@@ -155,6 +129,38 @@ class SonarrClient:
 
         return sorted(downloaded, key=lambda item: str(item.get("title", "")).lower())
 
+    def find_series_by_tvdb(self, tvdb_id: int) -> dict | None:
+        if tvdb_id <= 0:
+            raise ValueError("Нельзя проверить сериал без tvdbId.")
+
+        response = requests.get(
+            f"{self.base_url}/api/v3/series",
+            headers=self._headers(),
+            timeout=10,
+        )
+        response.raise_for_status()
+        series_list = response.json()
+        if not isinstance(series_list, list):
+            series_list = []
+
+        found_series = next((series for series in series_list if int(series.get("tvdbId", 0) or 0) == tvdb_id), None)
+        return found_series if isinstance(found_series, dict) else None
+
+    def series_exists(self, series_id: int) -> bool:
+        if series_id <= 0:
+            raise ValueError("Нельзя проверить сериал без id.")
+
+        response = requests.get(
+            f"{self.base_url}/api/v3/series/{series_id}",
+            headers=self._headers(),
+            timeout=10,
+        )
+        if response.status_code == 404:
+            return False
+
+        response.raise_for_status()
+        return True
+
     def delete_series(self, series_id: int, *, delete_files: bool) -> None:
         if series_id <= 0:
             raise ValueError("Нельзя удалить сериал без id.")
@@ -168,18 +174,4 @@ class SonarrClient:
             },
             timeout=10,
         )
-        # region agent log
-        _debug_log(
-            "bot/sonarr_client.py:160",
-            "sonarr delete response received",
-            data={
-                "seriesId": series_id,
-                "deleteFiles": delete_files,
-                "statusCode": response.status_code,
-                "reason": response.reason,
-                "bodyPreview": response.text[:400],
-            },
-            hypothesis_id="H3",
-        )
-        # endregion
         response.raise_for_status()

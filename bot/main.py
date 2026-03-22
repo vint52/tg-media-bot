@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import re
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import requests
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
@@ -70,28 +69,6 @@ MOVIE_SEARCH_PAGE_SIZE = 5
 SERIES_SEARCH_PAGE_SIZE = 5
 LIBRARY_PAGE_SIZE = 10
 MAGNET_LINK_RE = re.compile(r"magnet:\?[^\s]+", re.IGNORECASE)
-
-# region agent log
-DEBUG_SESSION_ID = "92b1ae"
-
-
-def _debug_log(location: str, message: str, *, data: dict, hypothesis_id: str, run_id: str = "initial") -> None:
-    try:
-        payload = {
-            "sessionId": DEBUG_SESSION_ID,
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-        }
-        print(json.dumps(payload, ensure_ascii=False), flush=True)
-    except Exception:
-        pass
-
-
-# endregion
 
 
 def _build_bot(config: AppConfig) -> Bot:
@@ -489,6 +466,12 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
         if len(text) <= limit:
             return text
         return text[: limit - 3].rstrip() + "..."
+
+    async def _delete_message_or_clear_markup(message: Message) -> None:
+        try:
+            await message.delete()
+        except TelegramAPIError:
+            await message.edit_reply_markup(reply_markup=None)
 
     def _series_season_count(series: dict) -> str:
         seasons = series.get("seasons")
@@ -1159,50 +1142,27 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             return
 
         title = _movie_title(movie, language)
-        # region agent log
-        _debug_log(
-            "bot/main.py:1137",
-            "movie delete handler entered",
-            data={
-                "movieId": movie_id,
-                "callbackData": str(callback.data),
-                "title": title,
-            },
-            hypothesis_id="H5",
-        )
-        # endregion
         try:
             context.radarr_client.delete_movie(movie_id, delete_files=True)
-        except requests.RequestException as exc:
-            # region agent log
-            _debug_log(
-                "bot/main.py:1140",
-                "movie delete handler caught request exception",
-                data={
-                    "movieId": movie_id,
-                    "exceptionType": type(exc).__name__,
-                    "exceptionText": str(exc)[:300],
-                },
-                hypothesis_id="H1",
-            )
-            # endregion
+        except requests.ReadTimeout as exc:
+            try:
+                movie_still_exists = context.radarr_client.movie_exists(movie_id)
+            except requests.RequestException:
+                await callback.answer()
+                await message.answer(_t(language, "movie_delete_failed"))
+                return
+
+            if movie_still_exists:
+                await callback.answer()
+                await message.answer(_t(language, "movie_delete_failed"))
+                return
+        except requests.RequestException:
             await callback.answer()
             await message.answer(_t(language, "movie_delete_failed"))
             return
 
         _remove_library_movie(chat_id, movie_id)
-        # region agent log
-        _debug_log(
-            "bot/main.py:1153",
-            "movie delete handler completed successfully",
-            data={
-                "movieId": movie_id,
-                "title": title,
-            },
-            hypothesis_id="H3",
-        )
-        # endregion
-        await message.edit_reply_markup(reply_markup=None)
+        await _delete_message_or_clear_markup(message)
         await message.answer(_t(language, "movie_deleted", title=title))
         await callback.answer(_t(language, "deleted_short"))
 
@@ -1231,50 +1191,27 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             return
 
         title = _series_title(series, language)
-        # region agent log
-        _debug_log(
-            "bot/main.py:1182",
-            "series delete handler entered",
-            data={
-                "seriesId": series_id,
-                "callbackData": str(callback.data),
-                "title": title,
-            },
-            hypothesis_id="H3",
-        )
-        # endregion
         try:
             context.sonarr_client.delete_series(series_id, delete_files=True)
-        except requests.RequestException as exc:
-            # region agent log
-            _debug_log(
-                "bot/main.py:1185",
-                "series delete handler caught request exception",
-                data={
-                    "seriesId": series_id,
-                    "exceptionType": type(exc).__name__,
-                    "exceptionText": str(exc)[:300],
-                },
-                hypothesis_id="H3",
-            )
-            # endregion
+        except requests.ReadTimeout as exc:
+            try:
+                series_still_exists = context.sonarr_client.series_exists(series_id)
+            except requests.RequestException:
+                await callback.answer()
+                await message.answer(_t(language, "series_delete_failed"))
+                return
+
+            if series_still_exists:
+                await callback.answer()
+                await message.answer(_t(language, "series_delete_failed"))
+                return
+        except requests.RequestException:
             await callback.answer()
             await message.answer(_t(language, "series_delete_failed"))
             return
 
         _remove_library_series(chat_id, series_id)
-        # region agent log
-        _debug_log(
-            "bot/main.py:1198",
-            "series delete handler completed successfully",
-            data={
-                "seriesId": series_id,
-                "title": title,
-            },
-            hypothesis_id="H3",
-        )
-        # endregion
-        await message.edit_reply_markup(reply_markup=None)
+        await _delete_message_or_clear_markup(message)
         await message.answer(_t(language, "series_deleted", title=title))
         await callback.answer(_t(language, "deleted_short"))
 
@@ -1346,12 +1283,26 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             await callback.answer(_t(language, "selected_option_not_found"), show_alert=True)
             return
 
+        created: dict
         try:
             created = context.radarr_client.add_movie(movie)
         except ValueError as exc:
             await message.answer(str(exc))
             await callback.answer()
             return
+        except requests.ReadTimeout as exc:
+            try:
+                verified_movie = context.radarr_client.find_movie_by_tmdb(tmdb_id)
+            except requests.RequestException:
+                await message.answer(_t(language, "movie_add_failed"))
+                await callback.answer()
+                return
+
+            if verified_movie is None:
+                await message.answer(_t(language, "movie_add_failed"))
+                await callback.answer()
+                return
+            created = verified_movie
         except requests.RequestException:
             await message.answer(_t(language, "movie_add_failed"))
             await callback.answer()
@@ -1386,12 +1337,26 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             await callback.answer(_t(language, "selected_option_not_found"), show_alert=True)
             return
 
+        created: dict
         try:
             created = context.sonarr_client.add_series(series)
         except ValueError as exc:
             await message.answer(str(exc))
             await callback.answer()
             return
+        except requests.ReadTimeout as exc:
+            try:
+                verified_series = context.sonarr_client.find_series_by_tvdb(tvdb_id)
+            except requests.RequestException:
+                await message.answer(_t(language, "series_add_failed"))
+                await callback.answer()
+                return
+
+            if verified_series is None:
+                await message.answer(_t(language, "series_add_failed"))
+                await callback.answer()
+                return
+            created = verified_series
         except requests.RequestException:
             await message.answer(_t(language, "series_add_failed"))
             await callback.answer()
