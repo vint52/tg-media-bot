@@ -40,8 +40,8 @@ class AppContext:
     awaiting_magnet_link: set[int]
     movie_search_state: dict[int, "MovieSearchSession"]
     series_search_state: dict[int, "SeriesSearchSession"]
-    movie_library_state: dict[int, list[dict]]
-    series_library_state: dict[int, list[dict]]
+    movie_library_state: dict[int, "LibraryPageSession"]
+    series_library_state: dict[int, "LibraryPageSession"]
 
 
 @dataclass
@@ -58,8 +58,15 @@ class SeriesSearchSession:
     offset: int = 0
 
 
+@dataclass
+class LibraryPageSession:
+    items: list[dict]
+    offset: int = 0
+
+
 MOVIE_SEARCH_PAGE_SIZE = 5
 SERIES_SEARCH_PAGE_SIZE = 5
+LIBRARY_PAGE_SIZE = 10
 MAGNET_LINK_RE = re.compile(r"magnet:\?[^\s]+", re.IGNORECASE)
 
 
@@ -85,6 +92,7 @@ TRANSLATIONS = {
         "button_confirm_delete": "Подтвердить удаление",
         "button_cancel": "Отмена",
         "button_more_options": "Еще варианты",
+        "button_show_more_items": "Показать еще 10",
         "untitled": "Без названия",
         "not_available": "н/д",
         "rating_prefix": "Рейтинг",
@@ -133,6 +141,8 @@ TRANSLATIONS = {
         "enter_movie_search_text": "Введите текст для поиска фильма.",
         "radarr_search_failed": "Не удалось выполнить поиск в Radarr.",
         "library_state_not_found": "Список больше не актуален. Откройте его заново.",
+        "not_all_library_items_shown": "Показаны не все элементы списка.",
+        "all_library_items_shown": "Это все элементы списка.",
         "movie_delete_failed": "Не удалось удалить фильм из Radarr.",
         "series_delete_failed": "Не удалось удалить сериал из Sonarr.",
         "movie_deleted": "Фильм «{title}» удален.",
@@ -154,6 +164,7 @@ TRANSLATIONS = {
         "button_confirm_delete": "Confirm deletion",
         "button_cancel": "Cancel",
         "button_more_options": "More results",
+        "button_show_more_items": "Show 10 more",
         "untitled": "Untitled",
         "not_available": "n/a",
         "rating_prefix": "Rating",
@@ -202,6 +213,8 @@ TRANSLATIONS = {
         "enter_movie_search_text": "Enter text to search for a movie.",
         "radarr_search_failed": "Failed to search in Radarr.",
         "library_state_not_found": "This list is no longer available. Open it again.",
+        "not_all_library_items_shown": "Not all list items are shown.",
+        "all_library_items_shown": "These are all items in the list.",
         "movie_delete_failed": "Failed to delete the movie from Radarr.",
         "series_delete_failed": "Failed to delete the series from Sonarr.",
         "movie_deleted": "Movie \"{title}\" has been deleted.",
@@ -517,43 +530,58 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
         )
 
     def _find_library_movie(chat_id: int, movie_id: int) -> dict | None:
-        movies = context.movie_library_state.get(chat_id)
-        if not movies:
+        session = context.movie_library_state.get(chat_id)
+        if not session:
             return None
 
-        for movie in movies:
+        for movie in session.items:
             if int(movie.get("id", 0) or 0) == movie_id:
                 return movie
         return None
 
     def _find_library_series(chat_id: int, series_id: int) -> dict | None:
-        series_list = context.series_library_state.get(chat_id)
-        if not series_list:
+        session = context.series_library_state.get(chat_id)
+        if not session:
             return None
 
-        for series in series_list:
+        for series in session.items:
             if int(series.get("id", 0) or 0) == series_id:
                 return series
         return None
 
     def _remove_library_movie(chat_id: int, movie_id: int) -> None:
-        movies = context.movie_library_state.get(chat_id)
-        if not movies:
+        session = context.movie_library_state.get(chat_id)
+        if not session:
             return
-        context.movie_library_state[chat_id] = [
-            movie for movie in movies if int(movie.get("id", 0) or 0) != movie_id
-        ]
+
+        for index, movie in enumerate(session.items):
+            if int(movie.get("id", 0) or 0) != movie_id:
+                continue
+            session.items.pop(index)
+            if session.offset > index:
+                session.offset -= 1
+            break
 
     def _remove_library_series(chat_id: int, series_id: int) -> None:
-        series_list = context.series_library_state.get(chat_id)
-        if not series_list:
+        session = context.series_library_state.get(chat_id)
+        if not session:
             return
-        context.series_library_state[chat_id] = [
-            series for series in series_list if int(series.get("id", 0) or 0) != series_id
-        ]
+        for index, series in enumerate(session.items):
+            if int(series.get("id", 0) or 0) != series_id:
+                continue
+            session.items.pop(index)
+            if session.offset > index:
+                session.offset -= 1
+            break
 
-    async def _send_movie_library_cards(message: Message, language: str, movies: list[dict]) -> None:
-        for index, movie in enumerate(movies, start=1):
+    async def _send_movie_library_cards(
+        message: Message,
+        language: str,
+        movies: list[dict],
+        *,
+        start_index: int = 0,
+    ) -> None:
+        for index, movie in enumerate(movies, start=start_index + 1):
             movie_id = int(movie.get("id", 0) or 0)
             lines = [
                 f"{index}. {_movie_title(movie, language)} ({_movie_year(movie)})",
@@ -574,8 +602,14 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
 
             await message.answer(card_text, reply_markup=markup)
 
-    async def _send_series_library_cards(message: Message, language: str, series_list: list[dict]) -> None:
-        for index, series in enumerate(series_list, start=1):
+    async def _send_series_library_cards(
+        message: Message,
+        language: str,
+        series_list: list[dict],
+        *,
+        start_index: int = 0,
+    ) -> None:
+        for index, series in enumerate(series_list, start=start_index + 1):
             series_id = int(series.get("id", 0) or 0)
             statistics = series.get("statistics") or {}
             lines = [
@@ -597,6 +631,58 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
                     pass
 
             await message.answer(card_text, reply_markup=markup)
+
+    async def _send_movie_library_page(message: Message, session: LibraryPageSession, language: str) -> None:
+        start = session.offset
+        end = min(start + LIBRARY_PAGE_SIZE, len(session.items))
+        page_movies = session.items[start:end]
+
+        await _send_movie_library_cards(message, language, page_movies, start_index=start)
+
+        if end < len(session.items):
+            await message.answer(
+                _t(language, "not_all_library_items_shown"),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text=_t(language, "button_show_more_items"),
+                                callback_data="movies_details_more",
+                            )
+                        ]
+                    ]
+                ),
+            )
+        else:
+            await message.answer(_t(language, "all_library_items_shown"))
+
+        session.offset = end
+
+    async def _send_series_library_page(message: Message, session: LibraryPageSession, language: str) -> None:
+        start = session.offset
+        end = min(start + LIBRARY_PAGE_SIZE, len(session.items))
+        page_series = session.items[start:end]
+
+        await _send_series_library_cards(message, language, page_series, start_index=start)
+
+        if end < len(session.items):
+            await message.answer(
+                _t(language, "not_all_library_items_shown"),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text=_t(language, "button_show_more_items"),
+                                callback_data="series_details_more",
+                            )
+                        ]
+                    ]
+                ),
+            )
+        else:
+            await message.answer(_t(language, "all_library_items_shown"))
+
+        session.offset = end
 
     async def _send_movie_results_page(message: Message, session: MovieSearchSession, language: str) -> None:
         start = session.offset
@@ -775,7 +861,7 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             await message.answer(_t(language, "no_series_downloaded"))
             return
 
-        context.series_library_state[chat_id] = series
+        context.series_library_state[chat_id] = LibraryPageSession(items=series)
         lines = [_t(language, "downloaded_series")]
         lines.extend(
             f"{index}. {item.get('title', _t(language, 'untitled'))}" for index, item in enumerate(series, start=1)
@@ -807,7 +893,7 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             await message.answer(_t(language, "no_movies_downloaded"))
             return
 
-        context.movie_library_state[chat_id] = movies
+        context.movie_library_state[chat_id] = LibraryPageSession(items=movies)
         lines = [_t(language, "downloaded_movies")]
         lines.extend(
             f"{index}. {item.get('title', _t(language, 'untitled'))}" for index, item in enumerate(movies, start=1)
@@ -914,13 +1000,14 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             await callback.answer(_t(language, "no_access_short"), show_alert=True)
             return
 
-        movies = context.movie_library_state.get(chat_id)
-        if not movies:
+        session = context.movie_library_state.get(chat_id)
+        if not session or not session.items:
             await callback.answer(_t(language, "library_state_not_found"), show_alert=True)
             return
 
+        session.offset = 0
         await message.edit_reply_markup(reply_markup=None)
-        await _send_movie_library_cards(message, language, movies)
+        await _send_movie_library_page(message, session, language)
         await callback.answer()
 
     @dp.callback_query(F.data == "series_details")
@@ -936,13 +1023,58 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             await callback.answer(_t(language, "no_access_short"), show_alert=True)
             return
 
-        series_list = context.series_library_state.get(chat_id)
-        if not series_list:
+        session = context.series_library_state.get(chat_id)
+        if not session or not session.items:
             await callback.answer(_t(language, "library_state_not_found"), show_alert=True)
             return
 
+        session.offset = 0
         await message.edit_reply_markup(reply_markup=None)
-        await _send_series_library_cards(message, language, series_list)
+        await _send_series_library_page(message, session, language)
+        await callback.answer()
+
+    @dp.callback_query(F.data == "movies_details_more")
+    async def movies_details_more_handler(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None:
+            await callback.answer()
+            return
+
+        language = _language_for_callback(callback)
+        chat_id = message.chat.id
+        session = context.movie_library_state.get(chat_id)
+        if not session or not session.items:
+            await callback.answer(_t(language, "library_state_not_found"), show_alert=True)
+            return
+
+        if session.offset >= len(session.items):
+            await callback.answer(_t(language, "no_more_options"), show_alert=True)
+            return
+
+        await message.edit_reply_markup(reply_markup=None)
+        await _send_movie_library_page(message, session, language)
+        await callback.answer()
+
+    @dp.callback_query(F.data == "series_details_more")
+    async def series_details_more_handler(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None:
+            await callback.answer()
+            return
+
+        language = _language_for_callback(callback)
+        chat_id = message.chat.id
+        session = context.series_library_state.get(chat_id)
+        if not session or not session.items:
+            await callback.answer(_t(language, "library_state_not_found"), show_alert=True)
+            return
+
+        if session.offset >= len(session.items):
+            await callback.answer(_t(language, "no_more_options"), show_alert=True)
+            return
+
+        await message.edit_reply_markup(reply_markup=None)
+        await _send_series_library_page(message, session, language)
         await callback.answer()
 
     @dp.callback_query(F.data.startswith("movie_delete:"))
@@ -970,10 +1102,7 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             return
 
         await message.edit_reply_markup(reply_markup=_movie_delete_confirmation_markup(movie_id, language))
-        await callback.answer(
-            _t(language, "confirm_delete_movie", title=_movie_title(movie, language)),
-            show_alert=True,
-        )
+        await callback.answer()
 
     @dp.callback_query(F.data.startswith("series_delete:"))
     async def series_delete_handler(callback: CallbackQuery) -> None:
@@ -1000,10 +1129,7 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             return
 
         await message.edit_reply_markup(reply_markup=_series_delete_confirmation_markup(series_id, language))
-        await callback.answer(
-            _t(language, "confirm_delete_series", title=_series_title(series, language)),
-            show_alert=True,
-        )
+        await callback.answer()
 
     @dp.callback_query(F.data.startswith("movie_delete_confirm:"))
     async def movie_delete_confirm_handler(callback: CallbackQuery) -> None:
