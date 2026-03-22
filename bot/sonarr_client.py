@@ -128,3 +128,18 @@ class SonarrClient:
                 downloaded.append(series)
 
         return sorted(downloaded, key=lambda item: str(item.get("title", "")).lower())
+
+    def delete_series(self, series_id: int, *, delete_files: bool) -> None:
+        if series_id <= 0:
+            raise ValueError("Нельзя удалить сериал без id.")
+
+        response = requests.delete(
+            f"{self.base_url}/api/v3/series/{series_id}",
+            headers=self._headers(),
+            params={
+                "deleteFiles": str(delete_files).lower(),
+                "addImportListExclusion": "false",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()

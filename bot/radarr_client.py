@@ -112,3 +112,18 @@ class RadarrClient:
                 downloaded.append(movie)
 
         return sorted(downloaded, key=lambda item: str(item.get("title", "")).lower())
+
+    def delete_movie(self, movie_id: int, *, delete_files: bool) -> None:
+        if movie_id <= 0:
+            raise ValueError("Нельзя удалить фильм без id.")
+
+        response = requests.delete(
+            f"{self.base_url}/api/v3/movie/{movie_id}",
+            headers=self._headers(),
+            params={
+                "deleteFiles": str(delete_files).lower(),
+                "addImportExclusion": "false",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()

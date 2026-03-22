@@ -40,6 +40,8 @@ class AppContext:
     awaiting_magnet_link: set[int]
     movie_search_state: dict[int, "MovieSearchSession"]
     series_search_state: dict[int, "SeriesSearchSession"]
+    movie_library_state: dict[int, list[dict]]
+    series_library_state: dict[int, list[dict]]
 
 
 @dataclass
@@ -74,13 +76,22 @@ TRANSLATIONS = {
     "ru": {
         "button_all_series": "Все сериалы",
         "button_all_movies": "Все фильмы",
-        "button_add_series": "добавить сериал",
-        "button_add_movie": "добавить фильм",
-        "button_add_magnet": "добавить magnet",
+        "button_add_series": "Добавить сериал",
+        "button_add_movie": "Добавить фильм",
+        "button_add_magnet": "Добавить magnet",
         "button_download": "Скачать",
+        "button_details": "Подробнее",
+        "button_delete": "Удалить",
+        "button_confirm_delete": "Подтвердить удаление",
+        "button_cancel": "Отмена",
         "button_more_options": "Еще варианты",
         "untitled": "Без названия",
+        "not_available": "н/д",
         "rating_prefix": "Рейтинг",
+        "status_label": "Статус",
+        "size_label": "Размер",
+        "description_label": "Описание",
+        "seasons_label": "Сезоны",
         "qbittorrent_not_configured": "qBittorrent пока не настроен. Заполните раздел qbittorrent в конфиге и включите его.",
         "magnet_forward_failed": "Не удалось передать magnet-ссылку в qBittorrent.",
         "magnet_sent": "Magnet-ссылка отправлена в qBittorrent.",
@@ -112,6 +123,7 @@ TRANSLATIONS = {
         "series_add_failed": "Не удалось добавить сериал в Sonarr.",
         "series_added": "Сериал «{title}» добавлен в очередь на скачивание. После успешной загрузки пришлю уведомление.",
         "added_short": "Добавлено",
+        "deleted_short": "Удалено",
         "password_correct": "Пароль верный. Доступ открыт.",
         "password_incorrect": "Неверный пароль. Попробуйте еще раз.",
         "invalid_magnet_link": "Нужна корректная magnet-ссылка, начинающаяся с magnet:?.",
@@ -120,18 +132,35 @@ TRANSLATIONS = {
         "nothing_found": "Ничего не найдено. Попробуйте другое название.",
         "enter_movie_search_text": "Введите текст для поиска фильма.",
         "radarr_search_failed": "Не удалось выполнить поиск в Radarr.",
+        "library_state_not_found": "Список больше не актуален. Откройте его заново.",
+        "movie_delete_failed": "Не удалось удалить фильм из Radarr.",
+        "series_delete_failed": "Не удалось удалить сериал из Sonarr.",
+        "movie_deleted": "Фильм «{title}» удален.",
+        "series_deleted": "Сериал «{title}» удален.",
+        "delete_cancelled": "Удаление отменено.",
+        "confirm_delete_movie": "Удалить фильм «{title}»?",
+        "confirm_delete_series": "Удалить сериал «{title}»?",
         "unknown_command": "Команда не распознана. Используйте /help.",
     },
     "en": {
         "button_all_series": "All series",
         "button_all_movies": "All movies",
-        "button_add_series": "add series",
-        "button_add_movie": "add movie",
-        "button_add_magnet": "add magnet",
+        "button_add_series": "Add series",
+        "button_add_movie": "Add movie",
+        "button_add_magnet": "Add magnet",
         "button_download": "Download",
+        "button_details": "Details",
+        "button_delete": "Delete",
+        "button_confirm_delete": "Confirm deletion",
+        "button_cancel": "Cancel",
         "button_more_options": "More results",
         "untitled": "Untitled",
+        "not_available": "n/a",
         "rating_prefix": "Rating",
+        "status_label": "Status",
+        "size_label": "Size",
+        "description_label": "Description",
+        "seasons_label": "Seasons",
         "qbittorrent_not_configured": "qBittorrent is not configured yet. Fill in the qbittorrent section in the config and enable it.",
         "magnet_forward_failed": "Failed to forward the magnet link to qBittorrent.",
         "magnet_sent": "Magnet link has been sent to qBittorrent.",
@@ -163,6 +192,7 @@ TRANSLATIONS = {
         "series_add_failed": "Failed to add the series to Sonarr.",
         "series_added": "Series \"{title}\" has been added to the download queue. I will notify you after the download succeeds.",
         "added_short": "Added",
+        "deleted_short": "Deleted",
         "password_correct": "Password is correct. Access granted.",
         "password_incorrect": "Incorrect password. Try again.",
         "invalid_magnet_link": "A valid magnet link starting with magnet:? is required.",
@@ -171,6 +201,14 @@ TRANSLATIONS = {
         "nothing_found": "Nothing was found. Try a different title.",
         "enter_movie_search_text": "Enter text to search for a movie.",
         "radarr_search_failed": "Failed to search in Radarr.",
+        "library_state_not_found": "This list is no longer available. Open it again.",
+        "movie_delete_failed": "Failed to delete the movie from Radarr.",
+        "series_delete_failed": "Failed to delete the series from Sonarr.",
+        "movie_deleted": "Movie \"{title}\" has been deleted.",
+        "series_deleted": "Series \"{title}\" has been deleted.",
+        "delete_cancelled": "Deletion cancelled.",
+        "confirm_delete_movie": "Delete movie \"{title}\"?",
+        "confirm_delete_series": "Delete series \"{title}\"?",
         "unknown_command": "Command not recognized. Use /help.",
     },
 }
@@ -390,6 +428,176 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             return ""
         return f"{_t(language, 'rating_prefix')}: " + " | ".join(parts)
 
+    def _format_status(value: object, language: str) -> str:
+        status = str(value or "").strip()
+        if status:
+            return status
+        return _t(language, "not_available")
+
+    def _format_size(size_bytes: object, language: str) -> str:
+        try:
+            size = int(size_bytes or 0)
+        except (TypeError, ValueError):
+            size = 0
+
+        if size <= 0:
+            return _t(language, "not_available")
+
+        units = ["B", "KB", "MB", "GB", "TB", "PB"]
+        formatted = float(size)
+        unit_index = 0
+        while formatted >= 1024 and unit_index < len(units) - 1:
+            formatted /= 1024
+            unit_index += 1
+
+        if unit_index == 0:
+            return f"{int(formatted)} {units[unit_index]}"
+        return f"{formatted:.1f} {units[unit_index]}"
+
+    def _truncate_text(value: object, language: str, *, limit: int = 400) -> str:
+        text = " ".join(str(value or "").split())
+        if not text:
+            return _t(language, "not_available")
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3].rstrip() + "..."
+
+    def _series_season_count(series: dict) -> str:
+        seasons = series.get("seasons")
+        if not isinstance(seasons, list):
+            return "0"
+
+        count = 0
+        for season in seasons:
+            if not isinstance(season, dict):
+                continue
+            season_number = int(season.get("seasonNumber", 0) or 0)
+            if season_number > 0:
+                count += 1
+        return str(count)
+
+    def _movie_library_markup(movie_id: int, language: str) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=_t(language, "button_delete"), callback_data=f"movie_delete:{movie_id}")]
+            ]
+        )
+
+    def _series_library_markup(series_id: int, language: str) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=_t(language, "button_delete"), callback_data=f"series_delete:{series_id}")]
+            ]
+        )
+
+    def _movie_delete_confirmation_markup(movie_id: int, language: str) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=_t(language, "button_confirm_delete"),
+                        callback_data=f"movie_delete_confirm:{movie_id}",
+                    )
+                ],
+                [InlineKeyboardButton(text=_t(language, "button_cancel"), callback_data=f"movie_delete_cancel:{movie_id}")],
+            ]
+        )
+
+    def _series_delete_confirmation_markup(series_id: int, language: str) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=_t(language, "button_confirm_delete"),
+                        callback_data=f"series_delete_confirm:{series_id}",
+                    )
+                ],
+                [InlineKeyboardButton(text=_t(language, "button_cancel"), callback_data=f"series_delete_cancel:{series_id}")],
+            ]
+        )
+
+    def _find_library_movie(chat_id: int, movie_id: int) -> dict | None:
+        movies = context.movie_library_state.get(chat_id)
+        if not movies:
+            return None
+
+        for movie in movies:
+            if int(movie.get("id", 0) or 0) == movie_id:
+                return movie
+        return None
+
+    def _find_library_series(chat_id: int, series_id: int) -> dict | None:
+        series_list = context.series_library_state.get(chat_id)
+        if not series_list:
+            return None
+
+        for series in series_list:
+            if int(series.get("id", 0) or 0) == series_id:
+                return series
+        return None
+
+    def _remove_library_movie(chat_id: int, movie_id: int) -> None:
+        movies = context.movie_library_state.get(chat_id)
+        if not movies:
+            return
+        context.movie_library_state[chat_id] = [
+            movie for movie in movies if int(movie.get("id", 0) or 0) != movie_id
+        ]
+
+    def _remove_library_series(chat_id: int, series_id: int) -> None:
+        series_list = context.series_library_state.get(chat_id)
+        if not series_list:
+            return
+        context.series_library_state[chat_id] = [
+            series for series in series_list if int(series.get("id", 0) or 0) != series_id
+        ]
+
+    async def _send_movie_library_cards(message: Message, language: str, movies: list[dict]) -> None:
+        for index, movie in enumerate(movies, start=1):
+            movie_id = int(movie.get("id", 0) or 0)
+            lines = [
+                f"{index}. {_movie_title(movie, language)} ({_movie_year(movie)})",
+                f"{_t(language, 'status_label')}: {_format_status(movie.get('status'), language)}",
+                f"{_t(language, 'size_label')}: {_format_size(movie.get('sizeOnDisk'), language)}",
+                f"{_t(language, 'description_label')}: {_truncate_text(movie.get('overview'), language)}",
+            ]
+            card_text = "\n".join(lines)
+
+            markup = _movie_library_markup(movie_id, language) if movie_id > 0 else None
+            poster_url = _movie_poster_url(movie)
+            if poster_url:
+                try:
+                    await message.answer_photo(photo=poster_url, caption=card_text, reply_markup=markup)
+                    continue
+                except Exception:
+                    pass
+
+            await message.answer(card_text, reply_markup=markup)
+
+    async def _send_series_library_cards(message: Message, language: str, series_list: list[dict]) -> None:
+        for index, series in enumerate(series_list, start=1):
+            series_id = int(series.get("id", 0) or 0)
+            statistics = series.get("statistics") or {}
+            lines = [
+                f"{index}. {_series_title(series, language)} ({_series_year(series)})",
+                f"{_t(language, 'status_label')}: {_format_status(series.get('status'), language)}",
+                f"{_t(language, 'seasons_label')}: {_series_season_count(series)}",
+                f"{_t(language, 'size_label')}: {_format_size(statistics.get('sizeOnDisk'), language)}",
+                f"{_t(language, 'description_label')}: {_truncate_text(series.get('overview'), language)}",
+            ]
+            card_text = "\n".join(lines)
+
+            markup = _series_library_markup(series_id, language) if series_id > 0 else None
+            poster_url = _series_poster_url(series)
+            if poster_url:
+                try:
+                    await message.answer_photo(photo=poster_url, caption=card_text, reply_markup=markup)
+                    continue
+                except Exception:
+                    pass
+
+            await message.answer(card_text, reply_markup=markup)
+
     async def _send_movie_results_page(message: Message, session: MovieSearchSession, language: str) -> None:
         start = session.offset
         end = min(start + MOVIE_SEARCH_PAGE_SIZE, len(session.results))
@@ -567,11 +775,19 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             await message.answer(_t(language, "no_series_downloaded"))
             return
 
+        context.series_library_state[chat_id] = series
         lines = [_t(language, "downloaded_series")]
         lines.extend(
             f"{index}. {item.get('title', _t(language, 'untitled'))}" for index, item in enumerate(series, start=1)
         )
-        await message.answer("\n".join(lines))
+        await message.answer(
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text=_t(language, "button_details"), callback_data="series_details")]
+                ]
+            ),
+        )
 
     @dp.message(F.text.in_({TRANSLATIONS["ru"]["button_all_movies"], TRANSLATIONS["en"]["button_all_movies"]}))
     async def all_movies_handler(message: Message) -> None:
@@ -591,11 +807,19 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
             await message.answer(_t(language, "no_movies_downloaded"))
             return
 
+        context.movie_library_state[chat_id] = movies
         lines = [_t(language, "downloaded_movies")]
         lines.extend(
             f"{index}. {item.get('title', _t(language, 'untitled'))}" for index, item in enumerate(movies, start=1)
         )
-        await message.answer("\n".join(lines))
+        await message.answer(
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text=_t(language, "button_details"), callback_data="movies_details")]
+                ]
+            ),
+        )
 
     @dp.message(F.text.in_({TRANSLATIONS["ru"]["button_add_movie"], TRANSLATIONS["en"]["button_add_movie"]}))
     async def add_movie_prompt_handler(message: Message) -> None:
@@ -676,6 +900,228 @@ def _build_dispatcher(context: AppContext) -> Dispatcher:
         await message.edit_reply_markup(reply_markup=None)
         await _send_series_results_page(message, session, language)
         await callback.answer()
+
+    @dp.callback_query(F.data == "movies_details")
+    async def movies_details_handler(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None:
+            await callback.answer()
+            return
+
+        language = _language_for_callback(callback)
+        chat_id = message.chat.id
+        if not context.storage.is_authorized(chat_id):
+            await callback.answer(_t(language, "no_access_short"), show_alert=True)
+            return
+
+        movies = context.movie_library_state.get(chat_id)
+        if not movies:
+            await callback.answer(_t(language, "library_state_not_found"), show_alert=True)
+            return
+
+        await message.edit_reply_markup(reply_markup=None)
+        await _send_movie_library_cards(message, language, movies)
+        await callback.answer()
+
+    @dp.callback_query(F.data == "series_details")
+    async def series_details_handler(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None:
+            await callback.answer()
+            return
+
+        language = _language_for_callback(callback)
+        chat_id = message.chat.id
+        if not context.storage.is_authorized(chat_id):
+            await callback.answer(_t(language, "no_access_short"), show_alert=True)
+            return
+
+        series_list = context.series_library_state.get(chat_id)
+        if not series_list:
+            await callback.answer(_t(language, "library_state_not_found"), show_alert=True)
+            return
+
+        await message.edit_reply_markup(reply_markup=None)
+        await _send_series_library_cards(message, language, series_list)
+        await callback.answer()
+
+    @dp.callback_query(F.data.startswith("movie_delete:"))
+    async def movie_delete_handler(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None:
+            await callback.answer()
+            return
+
+        language = _language_for_callback(callback)
+        chat_id = message.chat.id
+        if not context.storage.is_authorized(chat_id):
+            await callback.answer(_t(language, "no_access_short"), show_alert=True)
+            return
+
+        try:
+            movie_id = int(str(callback.data).split(":", maxsplit=1)[1])
+        except (IndexError, ValueError):
+            await callback.answer(_t(language, "invalid_button_data"), show_alert=True)
+            return
+
+        movie = _find_library_movie(chat_id, movie_id)
+        if not movie:
+            await callback.answer(_t(language, "selected_option_not_found"), show_alert=True)
+            return
+
+        await message.edit_reply_markup(reply_markup=_movie_delete_confirmation_markup(movie_id, language))
+        await callback.answer(
+            _t(language, "confirm_delete_movie", title=_movie_title(movie, language)),
+            show_alert=True,
+        )
+
+    @dp.callback_query(F.data.startswith("series_delete:"))
+    async def series_delete_handler(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None:
+            await callback.answer()
+            return
+
+        language = _language_for_callback(callback)
+        chat_id = message.chat.id
+        if not context.storage.is_authorized(chat_id):
+            await callback.answer(_t(language, "no_access_short"), show_alert=True)
+            return
+
+        try:
+            series_id = int(str(callback.data).split(":", maxsplit=1)[1])
+        except (IndexError, ValueError):
+            await callback.answer(_t(language, "invalid_button_data"), show_alert=True)
+            return
+
+        series = _find_library_series(chat_id, series_id)
+        if not series:
+            await callback.answer(_t(language, "selected_option_not_found"), show_alert=True)
+            return
+
+        await message.edit_reply_markup(reply_markup=_series_delete_confirmation_markup(series_id, language))
+        await callback.answer(
+            _t(language, "confirm_delete_series", title=_series_title(series, language)),
+            show_alert=True,
+        )
+
+    @dp.callback_query(F.data.startswith("movie_delete_confirm:"))
+    async def movie_delete_confirm_handler(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None:
+            await callback.answer()
+            return
+
+        language = _language_for_callback(callback)
+        chat_id = message.chat.id
+        if not context.storage.is_authorized(chat_id):
+            await callback.answer(_t(language, "no_access_short"), show_alert=True)
+            return
+
+        try:
+            movie_id = int(str(callback.data).split(":", maxsplit=1)[1])
+        except (IndexError, ValueError):
+            await callback.answer(_t(language, "invalid_button_data"), show_alert=True)
+            return
+
+        movie = _find_library_movie(chat_id, movie_id)
+        if not movie:
+            await callback.answer(_t(language, "selected_option_not_found"), show_alert=True)
+            return
+
+        title = _movie_title(movie, language)
+        try:
+            context.radarr_client.delete_movie(movie_id, delete_files=True)
+        except requests.RequestException:
+            await callback.answer()
+            await message.answer(_t(language, "movie_delete_failed"))
+            return
+
+        _remove_library_movie(chat_id, movie_id)
+        await message.edit_reply_markup(reply_markup=None)
+        await message.answer(_t(language, "movie_deleted", title=title))
+        await callback.answer(_t(language, "deleted_short"))
+
+    @dp.callback_query(F.data.startswith("series_delete_confirm:"))
+    async def series_delete_confirm_handler(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None:
+            await callback.answer()
+            return
+
+        language = _language_for_callback(callback)
+        chat_id = message.chat.id
+        if not context.storage.is_authorized(chat_id):
+            await callback.answer(_t(language, "no_access_short"), show_alert=True)
+            return
+
+        try:
+            series_id = int(str(callback.data).split(":", maxsplit=1)[1])
+        except (IndexError, ValueError):
+            await callback.answer(_t(language, "invalid_button_data"), show_alert=True)
+            return
+
+        series = _find_library_series(chat_id, series_id)
+        if not series:
+            await callback.answer(_t(language, "selected_option_not_found"), show_alert=True)
+            return
+
+        title = _series_title(series, language)
+        try:
+            context.sonarr_client.delete_series(series_id, delete_files=True)
+        except requests.RequestException:
+            await callback.answer()
+            await message.answer(_t(language, "series_delete_failed"))
+            return
+
+        _remove_library_series(chat_id, series_id)
+        await message.edit_reply_markup(reply_markup=None)
+        await message.answer(_t(language, "series_deleted", title=title))
+        await callback.answer(_t(language, "deleted_short"))
+
+    @dp.callback_query(F.data.startswith("movie_delete_cancel:"))
+    async def movie_delete_cancel_handler(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None:
+            await callback.answer()
+            return
+
+        language = _language_for_callback(callback)
+        chat_id = message.chat.id
+        if not context.storage.is_authorized(chat_id):
+            await callback.answer(_t(language, "no_access_short"), show_alert=True)
+            return
+
+        try:
+            movie_id = int(str(callback.data).split(":", maxsplit=1)[1])
+        except (IndexError, ValueError):
+            await callback.answer(_t(language, "invalid_button_data"), show_alert=True)
+            return
+
+        await message.edit_reply_markup(reply_markup=_movie_library_markup(movie_id, language))
+        await callback.answer(_t(language, "delete_cancelled"))
+
+    @dp.callback_query(F.data.startswith("series_delete_cancel:"))
+    async def series_delete_cancel_handler(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None:
+            await callback.answer()
+            return
+
+        language = _language_for_callback(callback)
+        chat_id = message.chat.id
+        if not context.storage.is_authorized(chat_id):
+            await callback.answer(_t(language, "no_access_short"), show_alert=True)
+            return
+
+        try:
+            series_id = int(str(callback.data).split(":", maxsplit=1)[1])
+        except (IndexError, ValueError):
+            await callback.answer(_t(language, "invalid_button_data"), show_alert=True)
+            return
+
+        await message.edit_reply_markup(reply_markup=_series_library_markup(series_id, language))
+        await callback.answer(_t(language, "delete_cancelled"))
 
     @dp.callback_query(F.data.startswith("movie_add:"))
     async def movie_add_handler(callback: CallbackQuery) -> None:
@@ -859,6 +1305,8 @@ async def run_bot() -> None:
         awaiting_magnet_link=set(),
         movie_search_state={},
         series_search_state={},
+        movie_library_state={},
+        series_library_state={},
     )
 
     bot = _build_bot(config)
